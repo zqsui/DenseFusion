@@ -24,6 +24,9 @@ from datasets.ycb.dataset import PoseDataset
 from lib.network import PoseNet, PoseRefineNet
 from lib.transformations import euler_matrix, quaternion_matrix, quaternion_from_matrix
 
+from matplotlib import pyplot as plt
+
+
 parser = argparse.ArgumentParser()
 parser.add_argument('--dataset_root', type=str, default = '', help='dataset root dir')
 parser.add_argument('--model', type=str, default = '',  help='resume PoseNet model')
@@ -109,7 +112,7 @@ while 1:
         input_line = input_line[:-1]
     testlist.append(input_line)
 input_file.close()
-print(len(testlist))
+print("num test list:", len(testlist))
 
 class_file = open('{0}/classes.txt'.format(dataset_config_dir))
 class_id = 1
@@ -133,7 +136,7 @@ while 1:
     cld[class_id] = np.array(cld[class_id])
     class_id += 1
 
-for now in range(0, 2949):
+for now in range(0, 1):
     img = Image.open('{0}/{1}-color.png'.format(opt.dataset_root, testlist[now]))
     depth = np.array(Image.open('{0}/{1}-depth.png'.format(opt.dataset_root, testlist[now])))
     posecnn_meta = scio.loadmat('{0}/results_PoseCNN_RSS2018/{1}.mat'.format(ycb_toolbox_dir, '%06d' % now))
@@ -154,6 +157,8 @@ for now in range(0, 2949):
             mask = mask_label * mask_depth
 
             choose = mask[rmin:rmax, cmin:cmax].flatten().nonzero()[0]
+            # generate randomly num_points points from the posecnn segmentation
+            # yes but why? --> for pointnet
             if len(choose) > num_points:
                 c_mask = np.zeros(len(choose), dtype=int)
                 c_mask[:num_points] = 1
@@ -167,13 +172,15 @@ for now in range(0, 2949):
             ymap_masked = ymap[rmin:rmax, cmin:cmax].flatten()[choose][:, np.newaxis].astype(np.float32)
             choose = np.array([choose])
 
+            # generate unorganized point cloud
             pt2 = depth_masked / cam_scale
             pt0 = (ymap_masked - cam_cx) * pt2 / cam_fx
             pt1 = (xmap_masked - cam_cy) * pt2 / cam_fy
             cloud = np.concatenate((pt0, pt1, pt2), axis=1)
 
+            # get masked rgb image
             img_masked = np.array(img)[:, :, :3]
-            img_masked = np.transpose(img_masked, (2, 0, 1))
+            img_masked = np.transpose(img_masked, (2, 0, 1)) 
             img_masked = img_masked[:, rmin:rmax, cmin:cmax]
 
             cloud = torch.from_numpy(cloud.astype(np.float32))
@@ -186,7 +193,7 @@ for now in range(0, 2949):
             img_masked = Variable(img_masked).cuda()
             index = Variable(index).cuda()
 
-            cloud = cloud.view(1, num_points, 3)
+            cloud = cloud.view(1, num_points, 3) #reshape
             img_masked = img_masked.view(1, 3, img_masked.size()[1], img_masked.size()[2])
 
             pred_r, pred_t, pred_c, emb = estimator(img_masked, cloud, choose, index)
@@ -208,7 +215,7 @@ for now in range(0, 2949):
                 R = Variable(torch.from_numpy(my_mat[:3, :3].astype(np.float32))).cuda().view(1, 3, 3)
                 my_mat[0:3, 3] = my_t
                 
-                new_cloud = torch.bmm((cloud - T), R).contiguous()
+                new_cloud = torch.bmm((cloud - T), R).contiguous() # Performs a batch matrix-matrix product of matrices stored in batch1 and batch2
                 pred_r, pred_t = refiner(new_cloud, emb, index)
                 pred_r = pred_r.view(1, 1, -1)
                 pred_r = pred_r / (torch.norm(pred_r, dim=2).view(1, 1, 1))

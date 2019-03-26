@@ -1,0 +1,11 @@
+experiments/logs
+
+.vscode
+
+*.pyc
+
+YCB_Video_toolbox/
+
+*.so
+
+trained_checkpoints/

@@ -1,0 +1,9 @@
+chef_can
+cracker_box
+gelatin_box
+meat_can
+mustard_bottle
+pudding_box
+sugar_box
+soup_can
+fish_can

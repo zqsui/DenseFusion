@@ -18,9 +18,9 @@ import scipy.io as scio
 class PoseDataset(data.Dataset):
     def __init__(self, mode, num_pt, add_noise, root, noise_trans, refine):
         if mode == 'train':
-            self.path = 'datasets/ycb/dataset_config/train_data_list.txt'
+            self.path = 'datasets/ycb_sim/dataset_config/train_data_list.txt'
         elif mode == 'test':
-            self.path = 'datasets/ycb/dataset_config/test_data_list.txt'
+            self.path = 'datasets/ycb_sim/dataset_config/test_data_list.txt'
         self.num_pt = num_pt
         self.root = root
         self.add_noise = add_noise
@@ -28,7 +28,6 @@ class PoseDataset(data.Dataset):
 
         self.list = []
         self.real = []
-        self.syn = []
         input_file = open(self.path)
         while 1:
             input_line = input_file.readline()
@@ -36,18 +35,14 @@ class PoseDataset(data.Dataset):
                 break
             if input_line[-1:] == '\n':
                 input_line = input_line[:-1]
-            if input_line[:5] == 'data/':
-                self.real.append(input_line)
-            else:
-                self.syn.append(input_line)
+            self.real.append(input_line)
             self.list.append(input_line)
         input_file.close()
 
         self.length = len(self.list)
         self.len_real = len(self.real)
-        self.len_syn = len(self.syn)
 
-        class_file = open('datasets/ycb/dataset_config/classes.txt')
+        class_file = open('datasets/ycb_sim/dataset_config/classes.txt')
         class_id = 1
         self.cld = {}
         while 1:
@@ -68,15 +63,10 @@ class PoseDataset(data.Dataset):
             
             class_id += 1
 
-        self.cam_cx_1 = 312.9869
-        self.cam_cy_1 = 241.3109
-        self.cam_fx_1 = 1066.778
-        self.cam_fy_1 = 1067.487
-
-        self.cam_cx_2 = 323.7872
-        self.cam_cy_2 = 279.6921
-        self.cam_fx_2 = 1077.836
-        self.cam_fy_2 = 1078.189
+        self.cam_cx = 320.0
+        self.cam_cy = 240.0
+        self.cam_fx = 618.62
+        self.cam_fy = 618.62
 
         self.xmap = np.array([[j for i in range(640)] for j in range(480)])
         self.ymap = np.array([[i for i in range(640)] for j in range(480)])
@@ -86,7 +76,7 @@ class PoseDataset(data.Dataset):
         self.noise_img_scale = 7.0
         self.minimum_num_pt = 50
         self.norm = transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
-        self.symmetry_obj_idx = [12, 15, 18, 19, 20]
+        self.symmetry_obj_idx = [0, 1, 2, 3, 5, 6, 7, 8] # 0-based
         self.num_pt_mesh_small = 500
         self.num_pt_mesh_large = 2600
         self.refine = refine
@@ -100,20 +90,15 @@ class PoseDataset(data.Dataset):
         label = np.array(Image.open('{0}/{1}-label.png'.format(self.root, self.list[index])))
         meta = scio.loadmat('{0}/{1}-meta.mat'.format(self.root, self.list[index]))
 
-        if self.list[index][:8] != 'data_syn' and int(self.list[index][5:9]) >= 60:
-            cam_cx = self.cam_cx_2
-            cam_cy = self.cam_cy_2
-            cam_fx = self.cam_fx_2
-            cam_fy = self.cam_fy_2
-        else:
-            cam_cx = self.cam_cx_1
-            cam_cy = self.cam_cy_1
-            cam_fx = self.cam_fx_1
-            cam_fy = self.cam_fy_1
+        cam_cx = self.cam_cx
+        cam_cy = self.cam_cy
+        cam_fx = self.cam_fx
+        cam_fy = self.cam_fy
 
         mask_back = ma.getmaskarray(ma.masked_equal(label, 0))
 
         add_front = False
+        self.add_noise = False
         if self.add_noise:
             for k in range(5):
                 seed = random.choice(self.syn)
@@ -155,19 +140,19 @@ class PoseDataset(data.Dataset):
         rmin, rmax, cmin, cmax = get_bbox(mask_label)
         img = np.transpose(np.array(img)[:, :, :3], (2, 0, 1))[:, rmin:rmax, cmin:cmax]
 
-        if self.list[index][:8] == 'data_syn':
-            seed = random.choice(self.real)  #???  This should be self.syn
-            back = np.array(self.trancolor(Image.open('{0}/{1}-color.png'.format(self.root, seed)).convert("RGB")))
-            back = np.transpose(back, (2, 0, 1))[:, rmin:rmax, cmin:cmax]
-            img_masked = back * mask_back[rmin:rmax, cmin:cmax] + img
-        else:
-            img_masked = img
+        # if self.list[index][:8] == 'data_syn':
+        #     seed = random.choice(self.real)  #???  This should be self.syn
+        #     back = np.array(self.trancolor(Image.open('{0}/{1}-color.png'.format(self.root, seed)).convert("RGB")))
+        #     back = np.transpose(back, (2, 0, 1))[:, rmin:rmax, cmin:cmax]
+        #     img_masked = back * mask_back[rmin:rmax, cmin:cmax] + img
+        # else:
+        img_masked = img
 
         if self.add_noise and add_front:
             img_masked = img_masked * mask_front[rmin:rmax, cmin:cmax] + front[:, rmin:rmax, cmin:cmax] * ~(mask_front[rmin:rmax, cmin:cmax])
 
-        if self.list[index][:8] == 'data_syn':
-            img_masked = img_masked + np.random.normal(loc=0.0, scale=7.0, size=img_masked.shape)
+        # if self.list[index][:8] == 'data_syn':
+        #     img_masked = img_masked + np.random.normal(loc=0.0, scale=7.0, size=img_masked.shape)
 
         # p_img = np.transpose(img_masked, (1, 2, 0))
         # scipy.misc.imsave('temp/{0}_input.png'.format(index), p_img)
