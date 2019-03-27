@@ -14,7 +14,6 @@ import copy
 import scipy.misc
 import scipy.io as scio
 
-
 class PoseDataset(data.Dataset):
     def __init__(self, mode, num_pt, add_noise, root, noise_trans, refine):
         if mode == 'train':
@@ -78,17 +77,51 @@ class PoseDataset(data.Dataset):
         self.norm = transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
         self.symmetry_obj_idx = [0, 1, 2, 3, 5, 6, 7, 8] # 0-based
         self.num_pt_mesh_small = 500
-        self.num_pt_mesh_large = 2600
+        self.num_pt_mesh_large = 2500
         self.refine = refine
         self.front_num = 2 # what is this???
 
         print(len(self.list))
+
+    def transform_depth2pcd(self, depth, index):
+        cam_cx = 320.0
+        cam_cy = 240.0
+        cam_fx = 618.62
+        cam_fy = 618.62
+
+        xmap = np.array([[j for i in range(640)] for j in range(480)])
+        ymap = np.array([[i for i in range(640)] for j in range(480)])
+
+        depth_masked = depth.flatten()[:, np.newaxis].astype(np.float32)
+        xmap_masked = xmap.flatten()[:, np.newaxis].astype(np.float32)
+        ymap_masked = ymap.flatten()[:, np.newaxis].astype(np.float32)
+
+        cam_scale = 10000.0
+        pt2 = depth_masked / cam_scale
+        pt0 = (ymap_masked - cam_cx) * pt2 / cam_fx
+        pt1 = (xmap_masked - cam_cy) * pt2 / cam_fy
+        cloud = np.concatenate((pt0, pt1, pt2), axis=1)
+
+        fw = open('temp/{0}_obs.xyz'.format(index), 'w')
+        for it in cloud:
+            fw.write('{0} {1} {2}\n'.format(it[0], it[1], it[2]))
+        fw.close()
 
     def __getitem__(self, index):
         img = Image.open('{0}/{1}-color.png'.format(self.root, self.list[index]))
         depth = np.array(Image.open('{0}/{1}-depth.png'.format(self.root, self.list[index])))
         label = np.array(Image.open('{0}/{1}-label.png'.format(self.root, self.list[index])))
         meta = scio.loadmat('{0}/{1}-meta.mat'.format(self.root, self.list[index]))
+
+        # rotate images 180 degree to get the correct point cloud
+        # The output from the simulation is rotated by 180 degree
+        img = np.rot90(np.rot90(img))
+        depth = np.rot90(np.rot90(depth))
+        label = np.rot90(np.rot90(label))
+
+        #print '{0}/{1}-color.png'.format(self.root, self.list[index])
+
+        # self.transform_depth2pcd(depth, index)
 
         cam_cx = self.cam_cx
         cam_cy = self.cam_cy
@@ -99,30 +132,8 @@ class PoseDataset(data.Dataset):
 
         add_front = False
         self.add_noise = False
-        if self.add_noise:
-            for k in range(5):
-                seed = random.choice(self.syn)
-                front = np.array(self.trancolor(Image.open('{0}/{1}-color.png'.format(self.root, seed)).convert("RGB")))
-                front = np.transpose(front, (2, 0, 1))
-                f_label = np.array(Image.open('{0}/{1}-label.png'.format(self.root, seed)))
-                front_label = np.unique(f_label).tolist()[1:]  # number of objects in the scene
-                if len(front_label) < self.front_num:  # add noises when the nubmer of objects is no less than self.front_num
-                   continue
-                front_label = random.sample(front_label, self.front_num)
-                for f_i in front_label:
-                    mk = ma.getmaskarray(ma.masked_not_equal(f_label, f_i))
-                    if f_i == front_label[0]:
-                        mask_front = mk
-                    else:
-                        mask_front = mask_front * mk
-                t_label = label * mask_front
-                if len(t_label.nonzero()[0]) > 1000:
-                    label = t_label
-                    add_front = True
-                    break
 
         obj = meta['cls_indexes'].flatten().astype(np.int32)
-
 
         # randomly get an object in the image with patch size greater than self.minimum_num_pt
         # why not get all objects??
@@ -134,25 +145,10 @@ class PoseDataset(data.Dataset):
             if len(mask.nonzero()[0]) > self.minimum_num_pt:
                 break
 
-        if self.add_noise:
-            img = self.trancolor(img)
-
         rmin, rmax, cmin, cmax = get_bbox(mask_label)
         img = np.transpose(np.array(img)[:, :, :3], (2, 0, 1))[:, rmin:rmax, cmin:cmax]
 
-        # if self.list[index][:8] == 'data_syn':
-        #     seed = random.choice(self.real)  #???  This should be self.syn
-        #     back = np.array(self.trancolor(Image.open('{0}/{1}-color.png'.format(self.root, seed)).convert("RGB")))
-        #     back = np.transpose(back, (2, 0, 1))[:, rmin:rmax, cmin:cmax]
-        #     img_masked = back * mask_back[rmin:rmax, cmin:cmax] + img
-        # else:
         img_masked = img
-
-        if self.add_noise and add_front:
-            img_masked = img_masked * mask_front[rmin:rmax, cmin:cmax] + front[:, rmin:rmax, cmin:cmax] * ~(mask_front[rmin:rmax, cmin:cmax])
-
-        # if self.list[index][:8] == 'data_syn':
-        #     img_masked = img_masked + np.random.normal(loc=0.0, scale=7.0, size=img_masked.shape)
 
         # p_img = np.transpose(img_masked, (1, 2, 0))
         # scipy.misc.imsave('temp/{0}_input.png'.format(index), p_img)
@@ -181,8 +177,6 @@ class PoseDataset(data.Dataset):
         pt0 = (ymap_masked - cam_cx) * pt2 / cam_fx
         pt1 = (xmap_masked - cam_cy) * pt2 / cam_fy
         cloud = np.concatenate((pt0, pt1, pt2), axis=1)
-        if self.add_noise:
-            cloud = np.add(cloud, add_t)
 
         # fw = open('temp/{0}_cld.xyz'.format(index), 'w')
         # for it in cloud:
@@ -212,7 +206,15 @@ class PoseDataset(data.Dataset):
         # for it in target:
         #    fw.write('{0} {1} {2}\n'.format(it[0], it[1], it[2]))
         # fw.close()
+
+        # raw_input()
         
+        # cloud: object cam cloud points (non-organized)
+        # choose: chosen indexes in the depth image (organized)
+        # img_masked: segmentated object image
+        # target: ground truth object pose in camera frame
+        # model_points: object points in local frame
+        # int(obj[idx]) - 1: object index
         return torch.from_numpy(cloud.astype(np.float32)), \
                torch.LongTensor(choose.astype(np.int32)), \
                self.norm(torch.from_numpy(img_masked.astype(np.float32))), \

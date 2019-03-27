@@ -47,6 +47,13 @@ parser.add_argument('--resume_refinenet', type=str, default = '',  help='resume 
 parser.add_argument('--start_epoch', type=int, default = 1, help='which epoch to start')
 opt = parser.parse_args()
 
+def del_logger(logger):
+    if logger:
+        for hdlr in logger.handlers:
+            logger.removeHandler(hdlr)
+            hdlr.flush()
+            hdlr.close()
+
 
 def main():
     opt.manualSeed = random.randint(1, 10000)
@@ -175,7 +182,7 @@ def main():
 
         print('>>>>>>>>----------epoch {0} train finish---------<<<<<<<<'.format(epoch))
 
-
+        del_logger(logger)
         logger = setup_logger('epoch%d_test' % epoch, os.path.join(opt.log_dir, 'epoch_%d_test_log.txt' % epoch))
         logger.info('Test time {0}'.format(time.strftime("%Hh %Mm %Ss", time.gmtime(time.time() - st_time)) + ', ' + 'Testing started'))
         test_dis = 0.0
@@ -247,6 +254,8 @@ def main():
 
             criterion = Loss(opt.num_points_mesh, opt.sym_list)
             criterion_refine = Loss_refine(opt.num_points_mesh, opt.sym_list)
+        
+        del_logger(logger)
 
 if __name__ == '__main__':
     main()
